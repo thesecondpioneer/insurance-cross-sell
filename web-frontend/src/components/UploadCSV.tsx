@@ -3,15 +3,30 @@ import { useState } from "react";
 import type { PredictionResult } from "../types/prediction";
 import PredictionTable from "./PredictionTable";
 
-type CSVRow = {
-  id: string;
-  response: string;
-};
+type CSVRow = PredictionResult;
+
+const MAX_PREVIEW_ROWS = 10000; // limit to avoid browser crash
 
 export default function UploadCSV() {
   const [data, setData] = useState<PredictionResult[]>([]);
   const [predicted, setPredicted] = useState<PredictionResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const requiredHeaders = [
+    "id",
+    "Gender",
+    "Age",
+    "Driving_License",
+    "Region_Code",
+    "Previously_Insured",
+    "Vehicle_Age",
+    "Vehicle_Damage",
+    "Annual_Premium",
+    "Policy_Sales_Channel",
+    "Vintage",
+  ];
+
+  const optionalHeaders = ["Response"];
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -21,27 +36,55 @@ export default function UploadCSV() {
     setData([]);
     setPredicted([]);
 
+    const previewRows: PredictionResult[] = [];
+    let headersValidated = false;
+    let hasResponse = false;
+
     Papa.parse<CSVRow>(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
-        try {
-          const rows = results.data;
-          const parsed: PredictionResult[] = rows
-            .filter(
-              (row): row is CSVRow =>
-                row.id !== undefined && row.response !== undefined
-            )
-            .map((row) => ({
-              id: String(row.id),
-              response: Number(row.response) || 0,
-            }));
-          setData(parsed);
-        } catch (err: unknown) {
+      worker: true, // parse in a background thread
+      step: (results, parser) => {
+        const row = results.data;
+
+        // validate headers once
+        if (!headersValidated) {
+          for (const h of requiredHeaders) {
+            if (!(h in row)) {
+              setError(`Missing column: ${h}`);
+              parser.abort();
+              return;
+            }
+          }
+          hasResponse = optionalHeaders.every((h) => h in row);
+          headersValidated = true;
+        }
+
+        // parse row with types
+        const parsedRow: PredictionResult = {
+          id: Number(row.id),
+          Gender: String(row.Gender).trim(),
+          Age: Number(row.Age),
+          Driving_License: Number(row.Driving_License),
+          Region_Code: Number(row.Region_Code),
+          Previously_Insured: Number(row.Previously_Insured),
+          Vehicle_Age: String(row.Vehicle_Age).trim(),
+          Vehicle_Damage: String(row.Vehicle_Damage).trim(),
+          Annual_Premium: Number(row.Annual_Premium),
+          Policy_Sales_Channel: Number(row.Policy_Sales_Channel),
+          Vintage: Number(row.Vintage),
+          Response: hasResponse ? Number(row.Response) : -1,
+        };
+
+        if (previewRows.length < MAX_PREVIEW_ROWS) {
+          previewRows.push(parsedRow);
+          setData([...previewRows]); // update preview as we go
+        }
+      },
+      complete: () => {
+        if (previewRows.length >= MAX_PREVIEW_ROWS) {
           setError(
-            err instanceof Error
-              ? `Ошибка при чтении CSV: ${err.message}`
-              : "Ошибка при чтении CSV: неизвестная ошибка"
+            `Preview limited to ${MAX_PREVIEW_ROWS} rows. Full file can still be sent to backend.`
           );
         }
       },
@@ -52,60 +95,61 @@ export default function UploadCSV() {
   const handlePredict = () => {
     const predictedData = data.map((row) => ({
       ...row,
-      response: Math.random(),
+      Response: Math.random() > 0.5 ? 1 : 0,
     }));
     setPredicted(predictedData);
   };
 
-  const tableData = predicted.length > 0 ? predicted : data;
+  const exampleData: PredictionResult[] = [
+    {
+      id: 1,
+      Gender: "Male",
+      Age: 23,
+      Driving_License: 1,
+      Region_Code: 5,
+      Previously_Insured: 0,
+      Vehicle_Age: ">2 Years",
+      Vehicle_Damage: "Yes",
+      Annual_Premium: 35000,
+      Policy_Sales_Channel: 26,
+      Vintage: 223,
+      Response: -1,
+    },
+  ];
 
   return (
-    <div className="max-w-3xl mx-auto p-6 upload-card">
+    <div className="max-w-6xl mx-auto p-6 upload-card">
       <h1 className="text-center text-3xl font-extrabold mb-6 text-purple-800">
         Insurance Predictions
       </h1>
 
-      <p className="mb-2 text-gray-700">
-        Загрузите CSV с колонками <code>id</code> и <code>response</code>. Пример:
-      </p>
+      <p className="mb-2 text-gray-700">Upload a CSV of format:</p>
 
-      <pre className="bg-purple-100 text-purple-800 p-3 mb-4 rounded-lg overflow-x-auto text-sm font-mono">
-{`id,response
-11504798,0
-11504799,0
-11504800,0`}
-      </pre>
+      <div className="table-wrapper">
+        <PredictionTable data={exampleData} />
+      </div>
 
-      {/* Buttons container */}
-      <div className="mb-4 flex gap-4">
-      {/* Browse CSV button */}
-      <label className="flex-1">
-        <span className="block w-full text-center bg-purple-500 text-white px-4 py-2 rounded cursor-pointer hover:bg-purple-600 transition">
-          Browse CSV
-        </span>
-        <input
-          type="file"
-          accept=".csv"
-          onChange={handleFile}
-          className="hidden"
-        />
-      </label>
+      <div className="flex gap-4 mb-4 justify-center">
+        {/* Browse CSV */}
+        <label>
+          <span className="button-common">Browse CSV</span>
+          <input type="file" accept=".csv" onChange={handleFile} className="hidden" />
+        </label>
 
-      {/* Predict button, same width as Browse */}
-      {data.length > 0 && (
-        <button
-          className="flex-1 bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 transition"
-          onClick={handlePredict}
-        >
-          Predict
-        </button>
-      )}
-    </div>
+        {/* Predict button */}
+        {data.length > 0 && (
+          <button className="button-common" onClick={handlePredict}>
+            Predict
+          </button>
+        )}
+      </div>
+
       {error && <p className="text-red-500 mb-4">{error}</p>}
 
-      {tableData.length > 0 && (
-        <div className="max-h-80 overflow-y-auto rounded-lg border border-purple-200">
-          <PredictionTable data={tableData} />
+      {/* Table */}
+      {data.length > 0 && (
+        <div className="table-wrapper">
+          <PredictionTable data={predicted.length > 0 ? predicted : data} />
         </div>
       )}
     </div>
