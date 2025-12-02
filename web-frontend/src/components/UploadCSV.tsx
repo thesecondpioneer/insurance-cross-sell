@@ -2,6 +2,8 @@ import * as Papa from "papaparse";
 import { useState } from "react";
 import type { PredictionResult } from "../types/prediction";
 import PredictionTable from "./PredictionTable";
+import { predictCSV } from "../api/client";
+
 
 type CSVRow = PredictionResult;
 
@@ -11,6 +13,7 @@ export default function UploadCSV() {
   const [data, setData] = useState<PredictionResult[]>([]);
   const [predicted, setPredicted] = useState<PredictionResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
 
   const requiredHeaders = [
     "id",
@@ -29,9 +32,10 @@ export default function UploadCSV() {
   const optionalHeaders = ["Response"];
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
 
+    setFile(selectedFile)
     setError(null);
     setData([]);
     setPredicted([]);
@@ -40,7 +44,7 @@ export default function UploadCSV() {
     let headersValidated = false;
     let hasResponse = false;
 
-    Papa.parse<CSVRow>(file, {
+    Papa.parse<CSVRow>(selectedFile, {
       header: true,
       skipEmptyLines: true,
       worker: true, // parse in a background thread
@@ -92,13 +96,18 @@ export default function UploadCSV() {
     });
   };
 
-  const handlePredict = () => {
-    const predictedData = data.map((row) => ({
-      ...row,
-      Response: Math.random() > 0.5 ? 1 : 0,
-    }));
+  const handlePredict = async () => {
+  if (!file) return; // optionally, track the currently uploaded file
+
+  try {
+    const predictedData: PredictionResult[] = await predictCSV(file);
     setPredicted(predictedData);
-  };
+  } catch (err: unknown) {
+    if (err instanceof Error) setError("Prediction failed: " + err.message);
+    else setError("Prediction failed: unknown error");
+  }
+};
+
 
   const exampleData: PredictionResult[] = [
     {
