@@ -1,4 +1,4 @@
-export const API_URL = "http://localhost:8000";
+export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export async function predictCSV(file: File) {
   const formData = new FormData();
@@ -13,5 +13,6 @@ export async function predictCSV(file: File) {
     throw new Error("Prediction failed");
   }
 
-  return res.json();
+  const result = await res.json();
+  return result.predictions;
 }
