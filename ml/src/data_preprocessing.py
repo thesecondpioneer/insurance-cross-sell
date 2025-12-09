@@ -38,6 +38,8 @@ def fit_preprocessor(train_df):
     """
     Рассчитывает все параметры препроцессинга на обучающих данных
     """
+    train_df = train_df.copy()
+
     preprocessor_params = {}
 
     #print("Обучение препроцессора на train данных...")
