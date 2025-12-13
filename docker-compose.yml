@@ -2,8 +2,8 @@ services:
   backend:
     build: ./backend
     container_name: insurance-backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - PYTHONUNBUFFERED=1
 
@@ -12,7 +12,5 @@ services:
     container_name: insurance-frontend
     ports:
       - "5173:80"  # map container port 80 to host 5173
-    environment:
-      - VITE_API_URL=http://backend:8000
     depends_on:
       - backend
