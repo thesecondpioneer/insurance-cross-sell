@@ -1,7 +1,13 @@
 import io
-import pandas as pd
+import pickle
 from typing import List, Dict, Any
+
+import numpy as np
+import pandas as pd
 from fastapi import UploadFile
+from catboost import CatBoostClassifier, Pool
+
+from services.preprocessor import apply_preprocessor
 
 REQUIRED_COLUMNS = [
     "id",
@@ -18,6 +24,31 @@ REQUIRED_COLUMNS = [
 ]
 
 OPTIONAL_COLUMNS = ["Response"]
+
+CATEGORICAL_FEATURES = [
+    "Previously_Insured",
+    "Vehicle_Age",
+    "Vehicle_Damage",
+    "Age_Group",
+    "Premium_Group",
+]
+
+import os
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+
+with open(os.path.join(MODELS_DIR, "preprocessor.pkl"), "rb") as f:
+    PREPROCESSOR_PARAMS = pickle.load(f)
+
+df_thr = pd.read_csv(os.path.join(MODELS_DIR, "Tresholds.csv"))
+
+OPTIMAL_THRESHOLD = float(
+    df_thr.loc[df_thr["Model"] == "catboost_model.pkl", "Treshold"].iloc[0]
+)
+
+with open(os.path.join(MODELS_DIR, "catboost_model.pkl"), "rb") as f:
+    MODEL: CatBoostClassifier = pickle.load(f)
 
 
 def parse_csv(file: UploadFile, max_rows: int = 10000) -> List[Dict[str, Any]]:
@@ -53,18 +84,26 @@ def parse_csv(file: UploadFile, max_rows: int = 10000) -> List[Dict[str, Any]]:
     df["Response"] = df["Response"].astype(int)
 
     # Convert to list of dicts
-    return [dict(row) for row in df.to_dict(orient="records")]
+    return df.to_dict(orient="records")  # type: ignore
 
 
 def predict(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Dummy prediction: randomly assign 0 or 1 to Response
-    """
-    import random
+    if not data:
+        return []
 
-    predictions = []
-    for row in data:
+    df_raw = pd.DataFrame(data)
+    df_proc = apply_preprocessor(df_raw, PREPROCESSOR_PARAMS, is_train=False)
+
+    pool = Pool(
+        df_proc, cat_features=[c for c in CATEGORICAL_FEATURES if c in df_proc.columns]
+    )
+
+    proba = MODEL.predict_proba(pool)[:, 1]
+    preds = (proba >= OPTIMAL_THRESHOLD).astype(int)
+
+    out: List[Dict[str, Any]] = []
+    for row, y_hat in zip(data, preds):
         new_row = row.copy()
-        new_row["Response"] = random.choice([0, 1])
-        predictions.append(new_row)
-    return predictions
+        new_row["Response"] = int(y_hat)
+        out.append(new_row)
+    return out
