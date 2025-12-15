@@ -11,7 +11,8 @@ body {
 
 /* Card container for UploadCSV */
 .upload-card {
-  @apply backdrop-blur-sm bg-white/50 rounded-xl shadow-lg p-6 flex flex-col gap-4 max-w-6xl w-full mx-auto;
+  @apply backdrop-blur-sm bg-white/50 rounded-xl shadow-lg p-6 flex flex-col gap-4 w-full mx-auto;
+  /* Убрали max-w-6xl - теперь растягивается под содержимое */
 }
 
 /* Unified buttons and file input */
@@ -35,8 +36,9 @@ pre {
 }
 
 /* Table styling */
+/* Таблица занимает полную ширину доступного пространства */
 table {
-  @apply w-full border-collapse;
+  @apply w-full min-w-[800px] border-collapse table-auto; /* min-w-[800px] гарантирует ширину */
 }
 
 thead {
@@ -45,7 +47,7 @@ thead {
 
 th,
 td {
-  @apply px-4 py-2 border-b border-gray-300 text-left;
+  @apply px-3 py-2 border-b border-gray-300 text-left whitespace-nowrap; /* whitespace-nowrap предотвращает перенос */
 }
 
 tbody tr:nth-child(even) {
@@ -58,5 +60,5 @@ tbody tr:nth-child(odd) {
 
 /* Make table wrapper scrollable */
 .table-wrapper {
-  @apply max-h-80 overflow-y-auto mb-6 rounded-lg opacity-80;
+  @apply max-h-96 overflow-auto mb-6 rounded-lg opacity-80;
 }
