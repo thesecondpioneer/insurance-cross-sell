@@ -53,8 +53,7 @@ with open(os.path.join(MODELS_DIR, "catboost_model.pkl"), "rb") as f:
 
 def parse_csv(file: UploadFile, max_rows: int = 10000) -> List[Dict[str, Any]]:
     """
-    Parse uploaded CSV file using pandas (or streaming if needed)
-    and enforce required headers. Limit rows to max_rows.
+    Parse CSV with safe type conversion per row
     """
     contents = file.file.read().decode("utf-8")
     df = pd.read_csv(io.StringIO(contents))
@@ -64,46 +63,112 @@ def parse_csv(file: UploadFile, max_rows: int = 10000) -> List[Dict[str, Any]]:
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
 
-    # Limit rows to avoid huge files crashing memory
+    # Limit rows
     df = df.head(max_rows)
 
     # Fill Response if missing
-    for col in OPTIONAL_COLUMNS:
-        if col not in df.columns:
-            df[col] = -1
+    if "Response" not in df.columns:
+        df["Response"] = -1
 
-    # Ensure correct types
-    df["id"] = df["id"].astype(int)
-    df["Age"] = df["Age"].astype(int)
-    df["Driving_License"] = df["Driving_License"].astype(int)
-    df["Region_Code"] = df["Region_Code"].astype(int)
-    df["Previously_Insured"] = df["Previously_Insured"].astype(int)
-    df["Annual_Premium"] = df["Annual_Premium"].astype(int)
-    df["Policy_Sales_Channel"] = df["Policy_Sales_Channel"].astype(int)
-    df["Vintage"] = df["Vintage"].astype(int)
-    df["Response"] = df["Response"].astype(int)
+    # Safe type conversion PER ROW
+    def safe_convert_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        row_copy = row.copy()
 
-    # Convert to list of dicts
-    return df.to_dict(orient="records")  # type: ignore
+        # Numeric columns - try conversion, fail silently
+        numeric_cols = [
+            "id",
+            "Age",
+            "Driving_License",
+            "Region_Code",
+            "Previously_Insured",
+            "Annual_Premium",
+            "Policy_Sales_Channel",
+            "Vintage",
+        ]
+
+        for col in numeric_cols:
+            if col in row_copy:
+                try:
+                    row_copy[col] = int(float(row_copy[col]))
+                except (ValueError, TypeError):
+                    row_copy[col] = None  # Will be caught by validation
+
+        # String columns
+        string_cols = ["Gender", "Vehicle_Age", "Vehicle_Damage"]
+        for col in string_cols:
+            if col in row_copy:
+                row_copy[col] = str(row_copy[col]).strip()
+
+        return row_copy
+
+    # Apply safe conversion row by row
+    rows = []
+    for _, row in df.iterrows():
+        rows.append(safe_convert_row(row.to_dict()))
+
+    return rows
+
+
+def validate_row(row: Dict[str, Any]) -> bool:
+    # Check numeric columns exist and are valid numbers
+    numeric_checks = {
+        "Age": lambda x: isinstance(x, int) and 18 <= x <= 100,
+        "Driving_License": lambda x: isinstance(x, int) and x in [0, 1],
+        "Region_Code": lambda x: isinstance(x, int) and x >= 0,
+        "Previously_Insured": lambda x: isinstance(x, int) and x in [0, 1],
+        "Annual_Premium": lambda x: isinstance(x, int) and x >= 0,
+        "Policy_Sales_Channel": lambda x: isinstance(x, int) and x >= 0,
+        "Vintage": lambda x: isinstance(x, int) and x >= 0,
+    }
+
+    for col, check in numeric_checks.items():
+        if col not in row or not check(row[col]):
+            return False
+
+    # String columns
+    if (
+        row.get("Gender") not in ["Male", "Female"]
+        or row.get("Vehicle_Age") not in ["< 1 Year", "1-2 Year", "> 2 Years"]
+        or row.get("Vehicle_Damage") not in ["Yes", "No"]
+    ):
+        return False
+
+    return True
 
 
 def predict(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not data:
         return []
 
-    df_raw = pd.DataFrame(data)
-    df_proc = apply_preprocessor(df_raw, PREPROCESSOR_PARAMS, is_train=False)
+    # Keep original order
+    results = []
+    for row in data:
+        if validate_row(row):
+            # Make a copy for prediction
+            row_copy = row.copy()
+            results.append(row_copy)
+        else:
+            # Invalid row, mark as error
+            row_copy = row.copy()
+            row_copy["Response"] = "Error"
+            results.append(row_copy)
 
-    pool = Pool(
-        df_proc, cat_features=[c for c in CATEGORICAL_FEATURES if c in df_proc.columns]
-    )
+    # Predict only for valid rows
+    valid_rows = [r for r in results if r["Response"] != "Error"]
 
-    proba = MODEL.predict_proba(pool)[:, 1]
-    preds = (proba >= OPTIMAL_THRESHOLD).astype(int)
+    if valid_rows:
+        df_raw = pd.DataFrame(valid_rows)
+        df_proc = apply_preprocessor(df_raw, PREPROCESSOR_PARAMS, is_train=False)
 
-    out: List[Dict[str, Any]] = []
-    for row, y_hat in zip(data, preds):
-        new_row = row.copy()
-        new_row["Response"] = int(y_hat)
-        out.append(new_row)
-    return out
+        pool = Pool(
+            df_proc,
+            cat_features=[c for c in CATEGORICAL_FEATURES if c in df_proc.columns],
+        )
+
+        proba = MODEL.predict_proba(pool)[:, 1]
+        preds = (proba >= OPTIMAL_THRESHOLD).astype(int)
+
+        for row, y_hat in zip(valid_rows, preds):
+            row["Response"] = int(y_hat)
+
+    return results

@@ -4,13 +4,14 @@ import type { PredictionResult } from "../types/prediction";
 import PredictionTable from "./PredictionTable";
 import { predictCSV } from "../api/client";
 
-
 type CSVRow = PredictionResult;
 
-const MAX_PREVIEW_ROWS = 10000; // limit to avoid browser crash
+const MAX_PREVIEW_ROWS = 1000; // limit to avoid browser crash
+const MAX_API_ROWS = 10000; // backend limit
 
 export default function UploadCSV() {
-  const [data, setData] = useState<PredictionResult[]>([]);
+  const [data, setData] = useState<PredictionResult[]>([]);           // 1000 строк для UI
+  const [allRows, setAllRows] = useState<PredictionResult[]>([]);     // до 10k строк для экспорта
   const [predicted, setPredicted] = useState<PredictionResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -35,21 +36,25 @@ export default function UploadCSV() {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    setFile(selectedFile)
+    setFile(selectedFile);
     setError(null);
     setData([]);
+    setAllRows([]);
     setPredicted([]);
 
     const previewRows: PredictionResult[] = [];
+    const allRowsBuffer: PredictionResult[] = [];
     let headersValidated = false;
     let hasResponse = false;
+    let rowCount = 0;
 
     Papa.parse<CSVRow>(selectedFile, {
       header: true,
       skipEmptyLines: true,
-      worker: true, // parse in a background thread
+      worker: true,
       step: (results, parser) => {
         const row = results.data;
+        rowCount++;
 
         // validate headers once
         if (!headersValidated) {
@@ -80,34 +85,109 @@ export default function UploadCSV() {
           Response: hasResponse ? Number(row.Response) : -1,
         };
 
-        if (previewRows.length < MAX_PREVIEW_ROWS) {
+        // UI: первые 1000 строк
+        if (rowCount < MAX_PREVIEW_ROWS) {
           previewRows.push(parsedRow);
-          setData([...previewRows]); // update preview as we go
+          setData([...previewRows]);
+        }
+
+        // Сохраняем до 10к строк для экспорта
+        if (rowCount < MAX_API_ROWS) {
+          allRowsBuffer.push(parsedRow);
+        }
+
+        // Останавливаемся на 10000 строке
+        if (rowCount >= MAX_API_ROWS) {
+          parser.abort();
         }
       },
       complete: () => {
-        if (previewRows.length >= MAX_PREVIEW_ROWS) {
-          setError(
-            `Preview limited to ${MAX_PREVIEW_ROWS} rows. Full file can still be sent to backend.`
-          );
+        setAllRows(allRowsBuffer);
+        if (rowCount > MAX_PREVIEW_ROWS) {
+          setError(`Preview limited to ${MAX_PREVIEW_ROWS} rows. API requests are limited to ${MAX_API_ROWS} rows.`);
         }
       },
       error: (err) => setError("Ошибка при чтении CSV: " + err.message),
     });
   };
 
-  const handlePredict = async () => {
-  if (!file) return; // optionally, track the currently uploaded file
+  async function createLimitedFile(file: File, maxRows: number): Promise<File> {
+    const reader = file.stream().getReader();
+    const decoder = new TextDecoder("utf-8");
+    let result = await reader.read();
+    let buffer = "";
 
-  try {
-    const predictedData: PredictionResult[] = await predictCSV(file);
-    setPredicted(predictedData);
-  } catch (err: unknown) {
-    if (err instanceof Error) setError("Prediction failed: " + err.message);
-    else setError("Prediction failed: unknown error");
+    const lines: string[] = [];
+
+    while (!result.done) {
+      buffer += decoder.decode(result.value, { stream: true });
+      const parts = buffer.split("\n");
+      buffer = parts.pop() || "";
+
+      for (const line of parts) {
+        if (line.trim() === "") continue;
+        lines.push(line);
+        if (lines.length > maxRows) {
+          break;
+        }
+      }
+
+      if (lines.length > maxRows) {
+        break;
+      }
+
+      result = await reader.read();
+    }
+
+    if (buffer && lines.length <= maxRows) {
+      lines.push(buffer);
+    }
+
+    const limitedCsv = lines.slice(0, maxRows + 1).join("\n");
+    return new File(
+      [new Blob([limitedCsv], { type: "text/csv" })],
+      "limited_data.csv",
+      { type: "text/csv" }
+    );
   }
-};
 
+  const handlePredict = async () => {
+    if (!file) return;
+
+    try {
+      const limitedFile = await createLimitedFile(file, MAX_API_ROWS);
+      const predictedData: PredictionResult[] = await predictCSV(limitedFile);
+
+      const finalAllRows = allRows.map((row) => {
+        const prediction = predictedData.find((p) => p.id === row.id);
+        return prediction ? { ...row, Response: prediction.Response } : row;
+      });
+
+      const finalPreview = finalAllRows.slice(0, MAX_PREVIEW_ROWS);
+      setPredicted(finalPreview);
+      setError(null);
+
+      const exportData = finalAllRows;
+      const exportContent = [
+        Object.keys(exportData[0]!).join(","),
+        ...exportData.map((row) =>
+          Object.values(row).map((v) => `"${v}"`).join(",")
+        ),
+      ].join("\n");
+
+      const exportBlob = new Blob([exportContent], { type: "text/csv" });
+      const url = URL.createObjectURL(exportBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "insurance_predictions.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      if (err instanceof Error)
+        setError("Prediction failed: " + err.message);
+      else setError("Prediction failed: unknown error");
+    }
+  };
 
   const exampleData: PredictionResult[] = [
     {
@@ -127,7 +207,7 @@ export default function UploadCSV() {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto p-6 upload-card">
+    <div className="upload-card">
       <h1 className="text-center text-3xl font-extrabold mb-6 text-purple-800">
         Insurance Predictions
       </h1>
@@ -139,13 +219,11 @@ export default function UploadCSV() {
       </div>
 
       <div className="flex gap-4 mb-4 justify-center">
-        {/* Browse CSV */}
         <label>
           <span className="button-common">Browse CSV</span>
           <input type="file" accept=".csv" onChange={handleFile} className="hidden" />
         </label>
 
-        {/* Predict button */}
         {data.length > 0 && (
           <button className="button-common" onClick={handlePredict}>
             Predict
@@ -155,10 +233,11 @@ export default function UploadCSV() {
 
       {error && <p className="text-red-500 mb-4">{error}</p>}
 
-      {/* Table */}
       {data.length > 0 && (
         <div className="table-wrapper">
-          <PredictionTable data={predicted.length > 0 ? predicted : data} />
+          <PredictionTable
+            data={predicted.length > 0 ? predicted : data}
+          />
         </div>
       )}
     </div>
