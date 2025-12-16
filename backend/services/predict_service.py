@@ -47,7 +47,7 @@ OPTIMAL_THRESHOLD = float(
     df_thr.loc[df_thr["Model"] == "catboost_model.pkl", "Treshold"].iloc[0]
 )
 
-with open(os.path.join(MODELS_DIR, "catboost_model.pkl"), "rb") as f:
+with open(os.path.join(MODELS_DIR, "catboost_model_all_gpu.pkl"), "rb") as f:
     MODEL: CatBoostClassifier = pickle.load(f)
 
 

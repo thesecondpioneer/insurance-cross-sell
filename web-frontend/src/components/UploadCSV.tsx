@@ -151,43 +151,43 @@ export default function UploadCSV() {
     );
   }
 
-  const handlePredict = async () => {
-    if (!file) return;
+const handlePredict = async () => {
+  if (!file) return;
 
-    try {
-      const limitedFile = await createLimitedFile(file, MAX_API_ROWS);
-      const predictedData: PredictionResult[] = await predictCSV(limitedFile);
+  try {
+    const limitedFile = await createLimitedFile(file, MAX_API_ROWS);
+    const predictedData: PredictionResult[] = await predictCSV(limitedFile);
 
-      const finalAllRows = allRows.map((row) => {
-        const prediction = predictedData.find((p) => p.id === row.id);
-        return prediction ? { ...row, Response: prediction.Response } : row;
-      });
+    // Мержим по индексу, а не по id
+    const finalAllRows = allRows.map((row, i) => {
+      const pred = predictedData[i];
+      return pred ? { ...row, Response: pred.Response } : row;
+    });
 
-      const finalPreview = finalAllRows.slice(0, MAX_PREVIEW_ROWS);
-      setPredicted(finalPreview);
-      setError(null);
+    const finalPreview = finalAllRows.slice(0, MAX_PREVIEW_ROWS);
+    setPredicted(finalPreview);
+    setError(null);
 
-      const exportData = finalAllRows;
-      const exportContent = [
-        Object.keys(exportData[0]!).join(","),
-        ...exportData.map((row) =>
-          Object.values(row).map((v) => `"${v}"`).join(",")
-        ),
-      ].join("\n");
+    // Экспорт
+    const exportData = finalAllRows;
+    const exportContent = [
+      Object.keys(exportData[0]!).join(","),
+      ...exportData.map((row) => Object.values(row).map((v) => `"${v}"`).join(",")),
+    ].join("\n");
 
-      const exportBlob = new Blob([exportContent], { type: "text/csv" });
-      const url = URL.createObjectURL(exportBlob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "insurance_predictions.csv";
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (err: unknown) {
-      if (err instanceof Error)
-        setError("Prediction failed: " + err.message);
-      else setError("Prediction failed: unknown error");
-    }
-  };
+    const exportBlob = new Blob([exportContent], { type: "text/csv" });
+    const url = URL.createObjectURL(exportBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "insurance_predictions.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (err: unknown) {
+    if (err instanceof Error) setError("Prediction failed: " + err.message);
+    else setError("Prediction failed: unknown error");
+  }
+};
+
 
   const exampleData: PredictionResult[] = [
     {
