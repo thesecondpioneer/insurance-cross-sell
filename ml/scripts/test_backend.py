@@ -32,25 +32,22 @@ def call_api_on_df(df_batch: pd.DataFrame) -> List[Dict[str, Any]]:
 
 def main():
     df = pd.read_csv(CSV_PATH)
-    df = df.head(5000000)
-    data_test, data_val = train_test_split(df, test_size=0.1, stratify=df["Response"])
+    df = df.tail(len(df) - 5000000)
     assert "id" in df.columns and "Response" in df.columns
 
     all_preds: List[Dict[str, Any]] = []
 
-    for start in range(0, len(data_val), BATCH_SIZE):
+    for start in range(0, len(df), BATCH_SIZE):
         end = start + BATCH_SIZE
-        df_batch = data_val.iloc[start:end].copy()
-        print(f"Sending rows {start}..{end-1} ({len(df_batch)})")
+        df_batch = df.iloc[start:end].copy()
+        print(f"Sending rows {start}..{start + len(df_batch)-1} ({len(df_batch)})")
 
         batch_preds = call_api_on_df(df_batch)
         all_preds.extend(batch_preds)
 
     df_pred = pd.DataFrame(all_preds)
     # merge by id to align ground truth and predictions
-    merged = data_val.merge(
-        df_pred[["id", "Response"]], on="id", suffixes=("_true", "_pred")
-    )
+    merged = df.merge(df_pred[["id", "Response"]], on="id", suffixes=("_true", "_pred"))
 
     y_true = merged["Response_true"].astype(int)
     y_pred = merged["Response_pred"].astype(int)
