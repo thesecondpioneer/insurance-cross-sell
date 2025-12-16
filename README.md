@@ -135,8 +135,8 @@ curl -X POST -F "file=@data.csv" http://localhost:5173/api/predict-csv
 Using the web service is fairly easy:
 
 1. Visit the frontend page at `http://localhost:5173` and press the "Upload CSV" button
-   [Step 1](images/step1.png)
+   ![Step 1](images/step1.png)
 2. Select the .csv file with the data in the format specified on the frontend (the "Response" column is optional)
-   [Step 2](images/step2.png)
+   ![Step 2](images/step2.png)
 3. Click the "Predict" button as your data preview appears, you should get your result as a .csv file and be able to see a preview of the prediction too!
-   [Step 3](images/step3.png)
+   ![Step 3](images/step3.png)
